@@ -8,9 +8,18 @@ from app.core.config import PAPERS_DIR
 from app.rag.vectorstore import get_vector_store
 
 def load_and_split_pdf(pdf_path: str) -> List[Any]:
-    filename = Path(pdf_path).name
-    loader = PyPDFLoader(pdf_path)
+    """Loads a PDF file, extracts pages, adds metadata, and splits into chunks."""
+    filepath = Path(pdf_path)
+    filename = filepath.name
+
+    if not filepath.exists() or filepath.stat().st_size == 0:
+        raise ValueError(f"PDF file is missing or empty: {filename}")
+
+    loader = PyPDFLoader(str(filepath))
     pages = loader.load()
+
+    if not pages:
+        raise ValueError(f"No readable pages found in PDF: {filename}")
 
     # Update metadata for cleaner references
     for page in pages:
@@ -26,29 +35,49 @@ def load_and_split_pdf(pdf_path: str) -> List[Any]:
     chunks = text_splitter.split_documents(pages)
     return chunks
 
+def ingest_single_pdf(pdf_path: str, api_key: str = None) -> Dict[str, Any]:
+    """
+    Ingests a single PDF into ChromaDB using deterministic IDs 
+    to prevent duplicate vector records upon re-upload or re-ingestion.
+    """
+    chunks = load_and_split_pdf(pdf_path)
+    filename = Path(pdf_path).name
+
+    if not chunks:
+        return {"status": "warning", "message": f"No text chunks created for {filename}", "count": 0}
+
+    vector_store = get_vector_store(api_key=api_key)
+    batch_size = 20
+
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i + batch_size]
+        # Generate deterministic IDs for chunks to prevent duplicates
+        batch_ids = [f"{filename}_chunk_{i + idx}" for idx in range(len(batch))]
+        vector_store.add_documents(batch, ids=batch_ids)
+        time.sleep(1.5)  # Pause to remain within Google Free Tier 100 RPM limit
+
+    return {
+        "status": "success",
+        "filename": filename,
+        "chunks_count": len(chunks)
+    }
+
 def ingest_all_papers(api_key: str = None) -> Dict[str, Any]:
+    """Scans PAPERS_DIR and ingests all PDF files into ChromaDB."""
     papers_path = Path(PAPERS_DIR)
     pdf_files = list(papers_path.glob("*.pdf"))
 
     if not pdf_files:
         return {"status": "warning", "message": f"No PDF papers found in {PAPERS_DIR}", "count": 0}
 
-    vector_store = get_vector_store(api_key=api_key)
-    total_chunks = 0
     processed_papers = []
+    total_chunks = 0
 
     for pdf_file in pdf_files:
-        chunks = load_and_split_pdf(str(pdf_file))
-        if chunks:
-            # Batch adding chunks to stay within Google API free-tier rate limits (100 RPM)
-            batch_size = 20
-            for i in range(0, len(chunks), batch_size):
-                batch = chunks[i:i + batch_size]
-                vector_store.add_documents(batch)
-                time.sleep(1.5)  # Pause briefly between batches to prevent 429 Rate Limit
-            
-            total_chunks += len(chunks)
+        result = ingest_single_pdf(str(pdf_file), api_key=api_key)
+        if result.get("status") == "success":
             processed_papers.append(pdf_file.name)
+            total_chunks += result.get("chunks_count", 0)
 
     return {
         "status": "success",
@@ -58,5 +87,5 @@ def ingest_all_papers(api_key: str = None) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     print("Starting document ingestion process...")
-    result = ingest_all_papers()
-    print("Ingestion Result:", result)
+    res = ingest_all_papers()
+    print("Ingestion Result:", res)
