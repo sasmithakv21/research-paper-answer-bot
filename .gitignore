@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+backend/.venv/
+data/vector_db/
+backend/data/vector_db/
+
+# Node / React
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Environment Variables & Secrets
+.env
+backend/.env
+*.env.local
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
